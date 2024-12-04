@@ -26,8 +26,7 @@ from configuration.generalConfigReader import get_config, important_QoS
 
 TODO
 1) Fix the countdown, so it would stop after 25s limit is reached.
-2) Rename the function names, make sure verb is at the first place.
-3) Add docstring or comment to everything thing.
+2) Docstring or comment everything.
 
 """
 
@@ -67,7 +66,11 @@ class Watchdog2(Node):
     def check_timeouts(self):
         if self.allStarted:
             for topic in self.watched_topics:
+<<<<<<< HEAD
                 thread = threading.Thread(target=topic.timer_initialization)
+=======
+                thread = threading.Thread(target=topic.initialize_timer)
+>>>>>>> origin/master
                 thread.start()
 
 
@@ -87,7 +90,11 @@ class WatchedTopic:
         self.phi: float = 0
         self.ifStarted = False
 
+<<<<<<< HEAD
     def timer_initialization(self):
+=======
+    def initialize_timer(self):
+>>>>>>> origin/master
         self.timeout_timer = self.node.create_timer(
             self.sub_config["expected_message_interval_ms"] / 1000.0,
             self.check_phi,
@@ -134,7 +141,11 @@ class WatchedTopic:
         self.last_seen_times_list.append(self.node.get_clock().now().nanoseconds / 1e9)
         self.ifStarted = True
 
+<<<<<<< HEAD
     def msg_interval_calculation(self, last_seen_times_list):
+=======
+    def calc_msg_interval(self, last_seen_times_list):
+>>>>>>> origin/master
         timestamps_intervals = numpy.diff(last_seen_times_list)
         timestamps_stddev: float = numpy.std(timestamps_intervals)
         base_stddev_coefficient = 0.005
@@ -147,8 +158,13 @@ class WatchedTopic:
         if len(self.last_seen_times_list) == self.list_maxlen:
             now = self.node.get_clock().now().nanoseconds / 1e9
             elapsed_time = now - self.last_seen_times_list[-1]
+<<<<<<< HEAD
             timestamps_mean, valid_stddev = self.msg_interval_calculation(self.last_seen_times_list)
             self.phi: float = self.phi_calculation(elapsed_time, timestamps_mean, valid_stddev)
+=======
+            timestamps_mean, valid_stddev = self.calc_msg_interval(self.last_seen_times_list)
+            self.phi: float = self.calc_phi(elapsed_time, timestamps_mean, valid_stddev)
+>>>>>>> origin/master
             self.logger.log(
                 rplog.LOG_LEVEL_DEBUG,
                 f"Topic: {self.key}, mean:{timestamps_mean: .4f}, stddev:{valid_stddev:.4f}, Current phi value: {self.phi:.10f}",
@@ -158,7 +174,11 @@ class WatchedTopic:
                 self.timeout_triggered(self.key, elapsed_time, False)
         return self.phi
 
+<<<<<<< HEAD
     def phi_calculation(self, elapsed_time, timestamps_mean, timestamps_stddev):
+=======
+    def calc_phi(self, elapsed_time, timestamps_mean, timestamps_stddev):
+>>>>>>> origin/master
         expected_mean = config["watchdog"]["watches"][self.key]["expected_message_interval_ms"] / 1000.0
         if timestamps_mean is None or timestamps_stddev is None:
             phi = 0
