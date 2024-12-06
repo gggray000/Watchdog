@@ -54,6 +54,11 @@ class Watchdog2(Node):
     def check_start_timeouts(self):
         now = self.get_clock().now()
         timeout_limit = config["watchdog"]["meta"]["start_timeout_ms"]  # 25000
+        # 06.12 Early return to stop countdown.
+        if any(topic.start_timeout for topic in self.watched_topics):
+            self.start_timeout_timer.cancel()
+            return
+
         for topic in self.watched_topics:
             topic.check_start_timeouts(now, timeout_limit)
 
@@ -85,6 +90,8 @@ class WatchedTopic:
         self.subscription = None
         self.phi: float = 0
         self.ifStarted = False
+        # 06.12 Added another flag
+        self.start_timeout = False
 
     def initialize_timer(self):
         self.timeout_timer = self.node.create_timer(
@@ -126,8 +133,10 @@ class WatchedTopic:
                 rplog.LOG_COLOR_YELLOW,
             )
 
-            if after_start_time * 1000 > timeout_limit:
-                self.timeout_triggered(self.key, after_start_time * 1000, True)
+            # 06.12 Changed the logic and added another flag to indicate start timeout.
+            if after_start_time * 1000 > timeout_limit and (not self.started_and_necessary()):
+                self.start_timeout = True
+                self.timeout_triggered(self.key, after_start_time * 1000, self.start_timeout)
 
     def update_msg_list(self, _):
         self.last_seen_times_list.append(self.node.get_clock().now().nanoseconds / 1e9)
