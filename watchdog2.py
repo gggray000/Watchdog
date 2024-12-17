@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import math
 import numpy
+from sympy import true
 import rclpy
 import threading
 from collections import deque
@@ -20,15 +21,6 @@ if TYPE_CHECKING:
 
 import rplogger.rplogger as rplog
 from configuration.generalConfigReader import get_config, important_QoS
-
-
-"""
-
-TODO
-1) Fix the countdown, so it would stop after 25s limit is reached.
-2) Docstring or comment everything.
-
-"""
 
 
 def main():
@@ -54,13 +46,11 @@ class Watchdog2(Node):
     def check_start_timeouts(self):
         now = self.get_clock().now()
         timeout_limit = config["watchdog"]["meta"]["start_timeout_ms"]  # 25000
-        # 06.12 Early return to stop countdown.
-        if any(topic.start_timeout for topic in self.watched_topics):
-            self.start_timeout_timer.cancel()
-            return
 
         for topic in self.watched_topics:
-            topic.check_start_timeouts(now, timeout_limit)
+            if topic.check_start_timeouts(now, timeout_limit):
+                self.start_timeout_timer.cancel()
+                return
 
         if not self.allStarted and all(topic.started_and_necessary() for topic in self.watched_topics):
             self.allStarted = True
@@ -90,8 +80,6 @@ class WatchedTopic:
         self.subscription = None
         self.phi: float = 0
         self.ifStarted = False
-        # 06.12 Added another flag
-        self.start_timeout = False
 
     def initialize_timer(self):
         self.timeout_timer = self.node.create_timer(
@@ -101,9 +89,17 @@ class WatchedTopic:
         )
 
     def started_and_necessary(self):
+        """
+        This function return the topic's status.
+        If the topic is not necessary on startup, then it's not important for timeout check at startup.
+        If the topic is necessary on startup, then it has to be started at startup to pass start timeout check.
+        """
         return self.ifStarted or not self.sub_config["necessary_on_startup"]
 
     def create_subscription(self, key):
+        """
+        reads topic list in the config file, and create subscriptions.
+        """
         current_topics = [x[0] for x in self.node.get_topic_names_and_types()]
         if self.sub_config["topic"] not in current_topics:
             return
@@ -115,12 +111,20 @@ class WatchedTopic:
         self.logger.log(rplog.LOG_LEVEL_INFO, f"Topic: {self.key} has been subscribed", rplog.LOG_COLOR_CYAN)
 
     def check_start_timeouts(self, now, timeout_limit):
-        if self.subscription is None:
-            self.create_subscription(self.key)
+        """
+        This function checks if any message is received within 25 seconds after watchdog starts.
+        """
+        self.create_subscription(self.key)
+        after_start_time = (now - self.start_time).nanoseconds / 1e9
+        if (
+            after_start_time * 1000 > timeout_limit
+            and self.sub_config["necessary_on_startup"]
+            and (not self.started_and_necessary())
+        ):
+            self.timeout_triggered(self.key, after_start_time * 1000, True)
+            return True
 
         if len(self.last_seen_times_list) == 0 and self.sub_config["necessary_on_startup"]:
-            after_start_time = (now - self.start_time).nanoseconds / 1e9
-
             self.logger.log_throttle(
                 1,
                 rplog.LOG_LEVEL_INFO,
@@ -132,17 +136,20 @@ class WatchedTopic:
                 ),
                 rplog.LOG_COLOR_YELLOW,
             )
-
-            # 06.12 Changed the logic and added another flag to indicate start timeout.
-            if after_start_time * 1000 > timeout_limit and (not self.started_and_necessary()):
-                self.start_timeout = True
-                self.timeout_triggered(self.key, after_start_time * 1000, self.start_timeout)
+        return False
 
     def update_msg_list(self, _):
+        """
+        Call back function for the subscribed topics, updates the message list whenver a new message is received.
+        """
         self.last_seen_times_list.append(self.node.get_clock().now().nanoseconds / 1e9)
         self.ifStarted = True
 
     def calc_msg_interval(self, last_seen_times_list):
+        """
+        base_stddev is necessary, to increase the tolerance of normal time intervals' flunctuation.
+        0.005 means any deviation within 0.5% is acceptable.
+        """
         timestamps_intervals = numpy.diff(last_seen_times_list)
         timestamps_stddev: float = numpy.std(timestamps_intervals)
         base_stddev_coefficient = 0.005
@@ -151,7 +158,9 @@ class WatchedTopic:
         return timestamps_intervals.mean(), valid_stddev
 
     def check_phi(self):
-        # print(len(self.last_seen_times_list), "->", self.key)
+        """
+        phi > 3 indicates that the probability of wrong failure detection is 0.1%.
+        """
         if len(self.last_seen_times_list) == self.list_maxlen:
             now = self.node.get_clock().now().nanoseconds / 1e9
             elapsed_time = now - self.last_seen_times_list[-1]
@@ -161,12 +170,14 @@ class WatchedTopic:
                 rplog.LOG_LEVEL_DEBUG,
                 f"Topic: {self.key}, mean:{timestamps_mean: .4f}, stddev:{valid_stddev:.4f}, Current phi value: {self.phi:.10f}",
             )
-            # phi > 3 indicates that the probability of wrong failure detection is 0.1%
             if self.phi > 3:
                 self.timeout_triggered(self.key, elapsed_time, False)
         return self.phi
 
     def calc_phi(self, elapsed_time, timestamps_mean, timestamps_stddev):
+        """
+        This function uses expected message interval as one of the parameter.
+        """
         expected_mean = config["watchdog"]["watches"][self.key]["expected_message_interval_ms"] / 1000.0
         if timestamps_mean is None or timestamps_stddev is None:
             phi = 0
