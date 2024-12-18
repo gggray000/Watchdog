@@ -100,6 +100,9 @@ class WatchedTopic:
         """
         reads topic list in the config file, and create subscriptions.
         """
+        if self.subscription is not None:
+            return
+        
         current_topics = [x[0] for x in self.node.get_topic_names_and_types()]
         if self.sub_config["topic"] not in current_topics:
             return
